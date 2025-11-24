@@ -1,203 +1,140 @@
 import streamlit as st
 from openai import OpenAI
+import tempfile
+import os
 
-# -----------------------------------
-# 0. 공통: API Key, 클라이언트 헬퍼
-# -----------------------------------
-st.set_page_config(page_title="21_Lab Streamlit", page_icon="📚")
-
-st.title("21_Lab Streamlit 실습 앱")
-
-# API Key를 session_state에 저장
-if "api_key" not in st.session_state:
-    st.session_state["api_key"] = ""
-
-st.sidebar.header("설정")
-api_key_input = st.sidebar.text_input(
-    "OpenAI API Key를 입력하세요",
-    type="password",
-    value=st.session_state["api_key"],
-)
-st.session_state["api_key"] = api_key_input
+# -------------------------------
+# 기본 설정
+# -------------------------------
+st.set_page_config(page_title="21_Lab Streamlit 실습 앱", layout="wide")
 
 
-def get_client() -> OpenAI | None:
-    """API Key가 없으면 None, 있으면 OpenAI 클라이언트 리턴"""
-    api_key = st.session_state.get("api_key", "")
-    if not api_key:
-        st.warning("먼저 왼쪽 사이드바에서 OpenAI API Key를 입력하세요.")
-        return None
+# -------------------------------
+# OpenAI Client 헬퍼
+# -------------------------------
+@st.cache_resource
+def get_client(api_key: str):
     return OpenAI(api_key=api_key)
 
 
-# 페이지 선택
-page = st.sidebar.radio(
-    "페이지 선택",
-    [
-        "1. Q&A (gpt-5-mini)",
-        "2. Chat (Responses API)",
-        "3. 도서관 챗봇",
-        "4. ChatPDF",
-    ],
-)
-
-
-# -----------------------------------
-# 1. Q&A 페이지 (이미 만든 것 + cache_data)
-# -----------------------------------
+# -------------------------------
+# 1번: Q&A (gpt-5-mini) – @st.cache_data 사용
+# -------------------------------
 @st.cache_data
-def ask_gpt(api_key: str, question: str) -> str:
-    """gpt-5-mini에 질문하고, 답을 문자열로 돌려주는 함수 (결과 캐시됨)"""
-    client = OpenAI(api_key=api_key)
-    completion = client.chat.completions.create(
+def ask_gpt5_mini(api_key: str, question: str) -> str:
+    """
+    같은 질문에 대해서는 다시 호출하지 않고
+    캐시에 저장된 결과를 돌려주기 위한 함수.
+    """
+    client = get_client(api_key)
+
+    response = client.responses.create(
         model="gpt-5-mini",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": question},
-        ],
+        input=question,
     )
-    return completion.choices[0].message.content
+
+    # output_text만 꺼내기 (단일 텍스트 응답이라고 가정)
+    answer_text = ""
+    for item in response.output:
+        # message 타입 안에 text가 들어있는 구조
+        if getattr(item, "type", None) == "message":
+            for content in item.content:
+                if getattr(content, "type", None) == "output_text":
+                    answer_text += content.text.value
+
+    return answer_text
 
 
-def page_qna():
-    st.header("1. GPT-5-mini 질문/답변 페이지")
+def page_qa():
+    st.header("1. Q&A (gpt-5-mini)")
 
     question = st.text_area("질문을 입력하세요")
 
-    if "last_answer" not in st.session_state:
-        st.session_state["last_answer"] = ""
+    if st.button("질문하기"):
+        if not question.strip():
+            st.warning("질문을 먼저 입력하세요.")
+            return
 
-    if st.button("GPT-5-mini에게 물어보기"):
-        api_key = st.session_state.get("api_key", "")
-        if not api_key:
-            st.error("먼저 OpenAI API Key를 입력하세요.")
-        elif not question.strip():
-            st.error("질문을 입력하세요.")
-        else:
-            with st.spinner("생각 중입니다..."):
-                try:
-                    answer = ask_gpt(api_key, question)
-                    st.session_state["last_answer"] = answer
-                except Exception as e:
-                    st.error("API 호출 중 오류가 발생했습니다.")
-                    st.write(e)
+        api_key = st.session_state["api_key"]
+        with st.spinner("응답 생성 중..."):
+            answer = ask_gpt5_mini(api_key, question)
 
-    if st.session_state.get("last_answer"):
         st.subheader("답변")
-        st.write(st.session_state["last_answer"])
+        st.write(answer)
 
 
-# -----------------------------------
-# 2. Chat 페이지 (Responses API + Clear 버튼)
-# -----------------------------------
+# -------------------------------
+# 2번: Chat 페이지 (Responses API)
+# -------------------------------
+def init_chat_state():
+    if "chat_messages" not in st.session_state:
+        st.session_state["chat_messages"] = []  # [{role:"user"/"assistant", "content": str}, ...]
+
+
 def page_chat():
     st.header("2. Chat 페이지 (Responses API)")
+    st.write("아래는 단순 예시 챗봇입니다. Clear 버튼을 누르면 대화 내용이 초기화됩니다.")
 
-    client = get_client()
-    if client is None:
-        return
+    init_chat_state()
 
-    # 대화 내역을 session_state에 저장
-    if "chat_messages" not in st.session_state:
-        st.session_state["chat_messages"] = []  # {role: "user"/"assistant", content: str}
-
-    st.caption("아래는 단순 예시 챗봇입니다. Clear 버튼을 누르면 대화 내용이 초기화됩니다.")
-
-    # 기존 대화 보여주기
-    for msg in st.session_state["chat_messages"]:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-    # 사용자 입력
-    user_input = st.chat_input("메시지를 입력하세요")
-
-    if user_input:
-        # 1) 사용자 메시지를 상태에 추가
-        st.session_state["chat_messages"].append(
-            {"role": "user", "content": user_input}
-        )
-
-        with st.chat_message("user"):
-            st.markdown(user_input)
-
-        # 2) 지금까지의 대화를 하나의 텍스트로 만들기
-        conversation_text = ""
-        for m in st.session_state["chat_messages"]:
-            speaker = "사용자" if m["role"] == "user" else "어시스턴트"
-            conversation_text += f"{speaker}: {m['content']}\n"
-        prompt = conversation_text + "어시스턴트:"
-
-        # 3) Responses API 호출
-        with st.chat_message("assistant"):
-            with st.spinner("응답 생성 중..."):
-                try:
-                    response = client.responses.create(
-                        model="gpt-5-mini",
-                        input=prompt,
-                    )
-
-                    # ---- 응답 텍스트 안전하게 꺼내기 ----
-                    answer = None
-
-                    # 1) output_text 속성이 있으면 그대로 사용
-                    answer = getattr(response, "output_text", None)
-
-                    # 2) 없으면 output -> content -> text 순서대로 한 단계씩 검사하며 꺼내기
-                    if not answer:
-                        output = getattr(response, "output", None)
-                        if output and len(output) > 0:
-                            content_list = getattr(output[0], "content", None)
-                            if content_list and len(content_list) > 0:
-                                text_obj = getattr(content_list[0], "text", None)
-                                if text_obj is not None:
-                                    answer = getattr(text_obj, "value", str(text_obj))
-
-                    # 3) 그래도 못 꺼냈으면 전체 response를 문자열로 보여주기 (디버그용)
-                    if not answer:
-                        answer = f"응답을 읽어오는 데 실패했어요.\n원본 응답: {response}"
-
-                    st.markdown(answer)
-
-                    st.session_state["chat_messages"].append(
-                        {"role": "assistant", "content": answer}
-                    )
-                except Exception as e:
-                    st.error(f"오류가 발생했습니다: {e}")
-
-    # Clear 버튼
     if st.button("대화 내용 지우기"):
         st.session_state["chat_messages"] = []
-        st.success("대화 내용이 초기화되었습니다.")
+
+    # 기존 대화 내용 출력
+    for msg in st.session_state["chat_messages"]:
+        role = "🙂 사용자" if msg["role"] == "user" else "🤖 챗봇"
+        with st.chat_message(role):
+            st.write(msg["content"])
+
+    user_message = st.chat_input("메시지를 입력하세요")
+
+    if user_message:
+        # 1) 화면에 사용자 메시지 추가
+        st.session_state["chat_messages"].append(
+            {"role": "user", "content": user_message}
+        )
+        with st.chat_message("🙂 사용자"):
+            st.write(user_message)
+
+        # 2) OpenAI 호출
+        api_key = st.session_state["api_key"]
+        client = get_client(api_key)
+
+        # 시스템 + 히스토리 + 새 유저 메시지를 input 형식으로 구성
+        input_messages = [{"role": "system", "content": "너는 친절한 한국어 챗봇이야."}]
+        for m in st.session_state["chat_messages"]:
+            input_messages.append(
+                {"role": m["role"], "content": m["content"]}
+            )
+
+        with st.chat_message("🤖 챗봇"):
+            with st.spinner("응답 작성 중..."):
+                response = client.responses.create(
+                    model="gpt-5-mini",
+                    input=input_messages,
+                )
+
+                answer_text = ""
+                for item in response.output:
+                    if getattr(item, "type", None) == "message":
+                        for content in item.content:
+                            if getattr(content, "type", None) == "output_text":
+                                answer_text += content.text.value
+
+                st.write(answer_text)
+
+        # 3) 히스토리에 assistant 답변 추가
+        st.session_state["chat_messages"].append(
+            {"role": "assistant", "content": answer_text}
+        )
 
 
-
-
-
-
-# -----------------------------------
-# 3. 도서관 챗봇 페이지
-# -----------------------------------
-def page_library_chatbot():
-    st.header("3. 도서관 챗봇")
-
-    client = get_client()
-    if client is None:
-        return
-
-    st.markdown(
-        """
-        국립부경대학교 도서관 규정집을 바탕으로 답변하는 챗봇입니다.  
-        아래 `LIBRARY_RULES` 변수 안에 **도서관 규정집 전체 텍스트를 그대로 복붙**해 주세요.
-        
-        예시 질문:
-        - 도서관 휴관일은 언제인가요?
-        - 학부생 책 대여 권수는 몇 권인가요?
-        """
-    )
-
-    # ⚠️ 여기 안에 도서관 규정집 전체 텍스트를 그대로 붙여 넣으세요.
-    #    (큰따옴표 세 개 """ """ 사이에 복붙)
-    LIBRARY_RULES = """국립부경대학교 도서관 규정
+# -------------------------------
+# 3번: 도서관 챗봇 페이지
+#     규정집 텍스트를 아래 상수에 붙여넣기
+# -------------------------------
+PKNU_LIBRARY_RULES = """
+국립부경대학교 도서관 규정
 [시행 2023.12.27.] [부경대학교학교규정 제1316호, 2023.12.27., 타법개정]
 도서관 학술정보과, 0516296702
 
@@ -610,101 +547,84 @@ def page_library_chatbot():
 
 제3조(글로벌정책대학원 모집단위 변경에 따른 경과조치) 이 학칙 시행으로 폐지된 “일본학과” 재적생은 졸업 시까지 동 전공에 재적하는 것으로 본다.
 
-제4조(다른 규정의 개정) 본교 제 규정의 제명 및 내용 중 “부경대학교”는 “국립부경대학교”로 한다. """
-
-    # 이전 질문/답변 기록 저장용
-    if "library_history" not in st.session_state:
-        # 각 항목: {"question": str, "answer": str}
-        st.session_state["library_history"] = []
-
-    # 이전 대화 보여주기
-    if st.session_state["library_history"]:
-        st.subheader("이전 질문 / 답변")
-        for item in st.session_state["library_history"]:
-            st.markdown(f"**Q. {item['question']}**")
-            st.markdown(f"- A. {item['answer']}")
-            st.markdown("---")
-
-    st.subheader("도서관 규정 질문하기")
-    question = st.text_input("도서관 규정에 대해 궁금한 점을 입력하세요.")
-
-    if st.button("도서관 챗봇에게 물어보기") and question:
-        # 모델에게 보낼 프롬프트 구성
-        prompt = f"""
-너는 국립부경대학교 도서관 규정집을 잘 아는 도움말 챗봇이다.
-
-아래는 도서관 규정집 전체 내용이다.
-
-[도서관 규정집]
-{LIBRARY_RULES}
-[/도서관 규정집]
-
-사용자의 질문에 대해, 반드시 위 규정집 내용을 근거로 한국어로 친절하게 답변해라.
-규정집에 없는 내용은 추측하지 말고
-"해당 내용은 제공된 도서관 규정집에 명시되어 있지 않습니다."라고 답해라.
-
-질문: {question}
-답변:
+제4조(다른 규정의 개정) 본교 제 규정의 제명 및 내용 중 “부경대학교”는 “국립부경대학교”로 한다.
 """
 
-        try:
-            with st.spinner("도서관 규정을 확인하는 중입니다..."):
-                response = client.responses.create(
-                    model="gpt-5-mini",
-                    input=prompt,
-                )
 
-                # ---- 응답 텍스트 안전하게 꺼내기 ----
-                answer = getattr(response, "output_text", None)
+def page_library_bot():
+    st.header("3. 국립부경대학교 도서관 챗봇")
 
-                if not answer:
-                    output = getattr(response, "output", None)
-                    if output and len(output) > 0:
-                        content_list = getattr(output[0], "content", None)
-                        if content_list and len(content_list) > 0:
-                            text_obj = getattr(content_list[0], "text", None)
-                            if text_obj is not None:
-                                answer = getattr(text_obj, "value", str(text_obj))
+    st.write(
+        "아래 챗봇은 **부경대 도서관 규정집 텍스트**를 바탕으로 답변합니다. "
+        "도서관 휴관일, 학부생 대출 권수 등을 물어보며 테스트해 보세요."
+    )
 
-                if not answer:
-                    answer = f"응답을 읽어오는 데 실패했어요.\n원본 응답: {response}"
+    question = st.text_input("도서관 규정에 대해 궁금한 점을 입력하세요")
 
-                st.markdown("### 답변")
-                st.write(answer)
+    if st.button("도서관 챗봇에게 물어보기"):
+        if not question.strip():
+            st.warning("질문을 먼저 입력하세요.")
+            return
 
-                # 기록 저장
-                st.session_state["library_history"].append(
-                    {"question": question, "answer": answer}
-                )
+        api_key = st.session_state["api_key"]
+        client = get_client(api_key)
 
-        except Exception as e:
-            st.error(f"오류가 발생했습니다: {e}")
+        system_prompt = (
+            "다음은 국립부경대학교 도서관 규정집 내용입니다.\n\n"
+            f"{PKNU_LIBRARY_RULES}\n\n"
+            "사용자의 질문에 대해, 위 규정 내용만을 근거로 한국어로 간단하게 답변하세요. "
+            "규정에 명시되지 않은 내용은 '규정에 명시되지 않았습니다'라고 답하세요."
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": question},
+        ]
+
+        with st.spinner("규정집을 바탕으로 답변 생성 중..."):
+            response = client.responses.create(
+                model="gpt-5-mini",
+                input=messages,
+            )
+
+        answer_text = ""
+        for item in response.output:
+            if getattr(item, "type", None) == "message":
+                for content in item.content:
+                    if getattr(content, "type", None) == "output_text":
+                        answer_text += content.text.value
+
+        st.subheader("답변")
+        st.write(answer_text)
 
 
+# -------------------------------
+# 4번: ChatPDF 페이지
+# -------------------------------
+def page_chatpdf():
+    api_key = st.session_state["api_key"]
+    client = get_client(api_key)
 
-#4번 문제
-def page_chatpdf(client):
     st.header("4. ChatPDF 페이지")
 
     # Vector store ID를 세션에 저장
     if "pdf_vector_store_id" not in st.session_state:
         st.session_state["pdf_vector_store_id"] = None
 
-    uploaded_file = st.file_uploader("PDF 파일을 업로드하세요", type=["pdf"])
+    uploaded_file = st.file_uploader(
+        "PDF 파일을 업로드하세요", type=["pdf"], accept_multiple_files=False
+    )
 
     # Vector store 생성 버튼
     if uploaded_file is not None:
         if st.button("이 PDF로 Vector store 생성"):
             with st.spinner("Vector store 생성 및 파일 업로드 중..."):
-                # 1) Vector store 생성  (beta 아님!)
+                # 1) 빈 vector store 생성
                 vector_store = client.vector_stores.create(
                     name="chatpdf-store",
                 )
 
-                # 2) 업로드된 파일을 임시로 저장해서 파일 객체로 전달
-                import tempfile
-                import os
-
+                # 2) 업로드된 파일을 임시 파일로 저장 후 업로드
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                     tmp.write(uploaded_file.getvalue())
                     tmp_path = tmp.name
@@ -717,11 +637,11 @@ def page_chatpdf(client):
 
                 os.remove(tmp_path)
 
-                # 3) 세션에 vector store ID 저장
+                # 3) 세션에 vector_store_id 저장
                 st.session_state["pdf_vector_store_id"] = vector_store.id
                 st.success("Vector store 생성이 완료되었습니다!")
 
-    # Clear 버튼: vector store 삭제
+    # Vector store 삭제 (Clear) 버튼
     if st.session_state["pdf_vector_store_id"]:
         if st.button("Vector store 삭제 (Clear)"):
             client.vector_stores.delete(
@@ -730,25 +650,25 @@ def page_chatpdf(client):
             st.session_state["pdf_vector_store_id"] = None
             st.success("Vector store가 삭제되었습니다.")
 
-    # 질문 입력 & 응답
+    # 질문 영역
     if st.session_state["pdf_vector_store_id"]:
         question = st.text_input("PDF 내용을 바탕으로 질문해 보세요")
 
         if st.button("질문하기") and question.strip():
-            with st.spinner("응답 생성 중..."):
+            with st.spinner("PDF 내용을 검색해서 답변 생성 중..."):
                 response = client.responses.create(
                     model="gpt-5-mini",
                     input=question,
                     tools=[{"type": "file_search"}],
                     extra_body={
                         "file_search": {
-                            "vector_store_ids": [st.session_state["pdf_vector_store_id"]]
+                            "vector_store_ids": [
+                                st.session_state["pdf_vector_store_id"]
+                            ]
                         }
                     },
                 )
 
-            # Q&A 페이지에서 사용하던 응답 파싱 함수가 있다면 그대로 사용
-            # 없다면 아래처럼 간단히 텍스트만 꺼내도 돼
             answer_text = ""
             for item in response.output:
                 if getattr(item, "type", None) == "message":
@@ -758,3 +678,51 @@ def page_chatpdf(client):
 
             st.subheader("답변")
             st.write(answer_text)
+    else:
+        st.info("먼저 PDF를 업로드하고 Vector store를 생성해주세요.")
+
+
+# -------------------------------
+# 메인 함수
+# -------------------------------
+def main():
+    st.title("21_Lab Streamlit 실습 앱")
+
+    # --- API Key 입력 & session_state 저장 ---
+    if "api_key" not in st.session_state:
+        st.session_state["api_key"] = ""
+
+    api_key_input = st.sidebar.text_input(
+        "OpenAI API Key를 입력하세요", type="password"
+    )
+
+    if api_key_input:
+        st.session_state["api_key"] = api_key_input
+
+    if not st.session_state["api_key"]:
+        st.info("왼쪽 사이드바에 **OpenAI API Key**를 먼저 입력하세요.")
+        return
+
+    # --- 페이지 선택 ---
+    page = st.sidebar.radio(
+        "페이지 선택",
+        [
+            "Q&A (gpt-5-mini)",
+            "Chat (Responses API)",
+            "도서관 챗봇",
+            "ChatPDF",
+        ],
+    )
+
+    if page == "Q&A (gpt-5-mini)":
+        page_qa()
+    elif page == "Chat (Responses API)":
+        page_chat()
+    elif page == "도서관 챗봇":
+        page_library_bot()
+    elif page == "ChatPDF":
+        page_chatpdf()
+
+
+if __name__ == "__main__":
+    main()
