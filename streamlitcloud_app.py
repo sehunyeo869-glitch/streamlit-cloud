@@ -97,6 +97,7 @@ def page_chat():
     if client is None:
         return
 
+    # 대화 내역을 session_state에 저장
     if "chat_messages" not in st.session_state:
         st.session_state["chat_messages"] = []  # {role: "user"/"assistant", content: str}
 
@@ -104,28 +105,29 @@ def page_chat():
 
     # 기존 대화 보여주기
     for msg in st.session_state["chat_messages"]:
-        with st.chat_message("user" if msg["role"] == "user" else "assistant"):
+        with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
     # 사용자 입력
     user_input = st.chat_input("메시지를 입력하세요")
 
     if user_input:
-        # 사용자 메시지 추가/표시
+        # 1) 사용자 메시지를 상태에 추가
         st.session_state["chat_messages"].append(
             {"role": "user", "content": user_input}
         )
+
         with st.chat_message("user"):
             st.markdown(user_input)
 
-        # 대화 내용을 하나의 텍스트로 묶어서 Responses API 호출
+        # 2) 지금까지의 대화를 하나의 텍스트로 만들기
         conversation_text = ""
         for m in st.session_state["chat_messages"]:
-            prefix = "사용자" if m["role"] == "user" else "AI"
-            conversation_text += f"{prefix}: {m['content']}\n"
+            speaker = "사용자" if m["role"] == "user" else "어시스턴트"
+            conversation_text += f"{speaker}: {m['content']}\n"
+        prompt = conversation_text + "어시스턴트:"
 
-        prompt = conversation_text + "\nAI:"
-
+        # 3) Responses API 호출
         with st.chat_message("assistant"):
             with st.spinner("응답 생성 중..."):
                 try:
@@ -133,19 +135,40 @@ def page_chat():
                         model="gpt-5-mini",
                         input=prompt,
                     )
-                    answer = response.output[0].content[0].text
-                except Exception as e:
-                    answer = f"오류가 발생했습니다: {e}"
 
-                st.markdown(answer)
-                st.session_state["chat_messages"].append(
-                    {"role": "assistant", "content": answer}
-                )
+                    # ---- 응답 텍스트 안전하게 꺼내기 ----
+                    answer = None
+
+                    # 1) output_text 속성이 있으면 그대로 사용
+                    answer = getattr(response, "output_text", None)
+
+                    # 2) 없으면 output -> content -> text 순서대로 한 단계씩 검사하며 꺼내기
+                    if not answer:
+                        output = getattr(response, "output", None)
+                        if output and len(output) > 0:
+                            content_list = getattr(output[0], "content", None)
+                            if content_list and len(content_list) > 0:
+                                text_obj = getattr(content_list[0], "text", None)
+                                if text_obj is not None:
+                                    answer = getattr(text_obj, "value", str(text_obj))
+
+                    # 3) 그래도 못 꺼냈으면 전체 response를 문자열로 보여주기 (디버그용)
+                    if not answer:
+                        answer = f"응답을 읽어오는 데 실패했어요.\n원본 응답: {response}"
+
+                    st.markdown(answer)
+
+                    st.session_state["chat_messages"].append(
+                        {"role": "assistant", "content": answer}
+                    )
+                except Exception as e:
+                    st.error(f"오류가 발생했습니다: {e}")
 
     # Clear 버튼
     if st.button("대화 내용 지우기"):
         st.session_state["chat_messages"] = []
         st.success("대화 내용이 초기화되었습니다.")
+
 
 
 # -----------------------------------
