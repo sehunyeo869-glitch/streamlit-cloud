@@ -127,20 +127,19 @@ def page_chat():
             conversation_text += f"{speaker}: {m['content']}\n"
         prompt = conversation_text + "어시스턴트:"
 
-        # 3) Responses API 호출
+        # 3) Responses API 호출 (response_format 옵션 제거!)
         with st.chat_message("assistant"):
             with st.spinner("응답 생성 중..."):
                 try:
                     response = client.responses.create(
                         model="gpt-5-mini",
                         input=prompt,
-                        response_format={"type": "text"},  # 텍스트로 결과 받기
                     )
 
-                    # output → content → text → value 순서로 안전하게 꺼내기
-                    answer_obj = response.output[0].content[0].text
-                    # SDK 버전에 따라 .value 에 문자열이 들어 있음
-                    answer = getattr(answer_obj, "value", str(answer_obj))
+                    # output → content → text 순서로 안전하게 꺼내기
+                    text_obj = response.output[0].content[0].text
+                    # SDK 버전에 따라 text_obj.value 에 실제 문자열이 들어있을 수 있음
+                    answer = getattr(text_obj, "value", str(text_obj))
 
                     st.markdown(answer)
 
@@ -154,6 +153,7 @@ def page_chat():
     if st.button("대화 내용 지우기"):
         st.session_state["chat_messages"] = []
         st.success("대화 내용이 초기화되었습니다.")
+
 
 
 
