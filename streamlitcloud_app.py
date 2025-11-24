@@ -703,7 +703,10 @@ def page_chatpdf():
         with st.spinner("PDF 업로드 및 인덱싱 중..."):
             try:
                 # 1) PDF를 OpenAI 파일로 업로드
-                file = client.files.create(file=uploaded_file, purpose="assistants")
+                file = client.files.create(
+                    file=uploaded_file, 
+                    purpose="assistants",
+                )
 
                 # 2) 빈 vector store 생성
                 vector_store = client.vector_stores.create(
@@ -736,20 +739,18 @@ def page_chatpdf():
                 with st.spinner("PDF 내용을 검색하는 중입니다..."):
                     try:
                         response = client.responses.create(
-                            model="gpt-5-mini",
+                           model="gpt-5-mini",
                             input=question,
-                            tools=[{"type": "file_search"}],
-                            extra_body={               # ✅ 여기로 이동
-                                "tool_resources": {
-                                    "file_search": {
-                                        "vector_store_ids": [vs_id],
-                                    }
+                            tools=[
+                                {
+                                    "type": "file_search",
+                                    "vector_store_ids": [vs_id],
                                 }
-                            },
+                            ],
                         )
 
                         # 1번 페이지랑 똑같이 답변 추출
-                        answer = response.output[0].content[0].text
+                        answer = response.output[0].content[0].text.value
                         st.subheader("답변")
                         st.write(answer)
 
