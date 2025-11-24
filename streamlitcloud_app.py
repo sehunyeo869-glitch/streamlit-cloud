@@ -683,7 +683,7 @@ def page_library_chatbot():
 
 
 #4번 문제
-    def page_chatpdf(client):
+def page_chatpdf(client):
     st.header("4. ChatPDF 페이지")
 
     # Vector store ID를 세션에 저장
