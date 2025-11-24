@@ -739,18 +739,24 @@ def page_chatpdf():
                             model="gpt-5-mini",
                             input=question,
                             tools=[{"type": "file_search"}],
-                            tool_resources={
-                                "file_search": {
-                                    "vector_store_ids": [vs_id],
+                            extra_body={               # ✅ 여기로 이동
+                                "tool_resources": {
+                                    "file_search": {
+                                        "vector_store_ids": [vs_id],
+                                    }
                                 }
                             },
                         )
+
+                        # 1번 페이지랑 똑같이 답변 추출
                         answer = response.output[0].content[0].text
                         st.subheader("답변")
                         st.write(answer)
+
                     except Exception as e:
                         st.error("질문 처리 중 오류가 발생했습니다.")
                         st.write(e)
+
 
         # Vector store 삭제 버튼
         if st.button("Vector store 삭제 (Clear)"):
