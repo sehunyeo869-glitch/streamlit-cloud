@@ -706,12 +706,12 @@ def page_chatpdf():
                 file = client.files.create(file=uploaded_file, purpose="assistants")
 
                 # 2) 빈 vector store 생성
-                vector_store = client.beta.vector_stores.create(
+                vector_store = client.vector_stores.create(
                     name="ChatPDF vector store",
                 )
 
                 # 3) vector store에 파일 연결
-                client.beta.vector_stores.files.create(
+                client.vector_stores.files.create(
                     vector_store_id=vector_store.id,
                     file_id=file.id,
                 )
@@ -756,7 +756,7 @@ def page_chatpdf():
         if st.button("Vector store 삭제 (Clear)"):
             with st.spinner("Vector store 삭제 중입니다..."):
                 try:
-                    client.beta.vector_stores.delete(vector_store_id=vs_id)
+                    client.vector_stores.delete(vector_store_id=vs_id)
                 except Exception as e:
                     st.error("삭제 중 오류가 발생했습니다.")
                     st.write(e)
