@@ -97,6 +97,7 @@ def page_chat():
     if client is None:
         return
 
+    # 대화 내역을 session_state에 저장
     if "chat_messages" not in st.session_state:
         st.session_state["chat_messages"] = []  # {role: "user"/"assistant", content: str}
 
@@ -104,48 +105,56 @@ def page_chat():
 
     # 기존 대화 보여주기
     for msg in st.session_state["chat_messages"]:
-        with st.chat_message("user" if msg["role"] == "user" else "assistant"):
+        with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
     # 사용자 입력
     user_input = st.chat_input("메시지를 입력하세요")
 
     if user_input:
-        # 사용자 메시지 추가/표시
+        # 1) 사용자 메시지를 상태에 추가
         st.session_state["chat_messages"].append(
             {"role": "user", "content": user_input}
         )
+
         with st.chat_message("user"):
             st.markdown(user_input)
 
-        # 대화 내용을 하나의 텍스트로 묶어서 Responses API 호출
+        # 2) 지금까지의 대화를 하나의 텍스트로 만들기
         conversation_text = ""
         for m in st.session_state["chat_messages"]:
-            prefix = "사용자" if m["role"] == "user" else "AI"
-            conversation_text += f"{prefix}: {m['content']}\n"
+            speaker = "사용자" if m["role"] == "user" else "어시스턴트"
+            conversation_text += f"{speaker}: {m['content']}\n"
+        prompt = conversation_text + "어시스턴트:"
 
-        prompt = conversation_text + "\nAI:"
-
+        # 3) Responses API 호출
         with st.chat_message("assistant"):
             with st.spinner("응답 생성 중..."):
                 try:
                     response = client.responses.create(
                         model="gpt-5-mini",
                         input=prompt,
+                        response_format={"type": "text"},  # 텍스트로 결과 받기
                     )
-                    answer = response.output[0].content[0].text
-                except Exception as e:
-                    answer = f"오류가 발생했습니다: {e}"
 
-                st.markdown(answer)
-                st.session_state["chat_messages"].append(
-                    {"role": "assistant", "content": answer}
-                )
+                    # output → content → text → value 순서로 안전하게 꺼내기
+                    answer_obj = response.output[0].content[0].text
+                    # SDK 버전에 따라 .value 에 문자열이 들어 있음
+                    answer = getattr(answer_obj, "value", str(answer_obj))
+
+                    st.markdown(answer)
+
+                    st.session_state["chat_messages"].append(
+                        {"role": "assistant", "content": answer}
+                    )
+                except Exception as e:
+                    st.error(f"오류가 발생했습니다: {e}")
 
     # Clear 버튼
     if st.button("대화 내용 지우기"):
         st.session_state["chat_messages"] = []
         st.success("대화 내용이 초기화되었습니다.")
+
 
 
 # -----------------------------------
