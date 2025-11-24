@@ -682,98 +682,79 @@ def page_library_chatbot():
 
 
 
-# -----------------------------------
-# 4. ChatPDF 페이지
-# -----------------------------------
-def page_chatpdf():
+#4번 문제
+    def page_chatpdf(client):
     st.header("4. ChatPDF 페이지")
 
-    client = get_client()
-    if client is None:
-        return
-
+    # Vector store ID를 세션에 저장
     if "pdf_vector_store_id" not in st.session_state:
         st.session_state["pdf_vector_store_id"] = None
 
-    st.caption("PDF 파일을 업로드하고, 해당 내용을 바탕으로 질문/답변을 수행합니다.")
-
-    uploaded_file = st.file_uploader("PDF 파일을 업로드하세요 (1개)", type=["pdf"])
+    uploaded_file = st.file_uploader("PDF 파일을 업로드하세요", type=["pdf"])
 
     # Vector store 생성 버튼
-    if uploaded_file is not None and st.button("이 PDF로 Vector store 생성"):
-        with st.spinner("PDF 업로드 및 인덱싱 중..."):
-            try:
-                # 1) PDF를 OpenAI 파일로 업로드
-                file = client.files.create(file=uploaded_file, purpose="assistants")
-
-                # 2) 빈 vector store 생성
-                vector_store = client.beta.vector_stores.create(
-                    name="ChatPDF vector store",
+    if uploaded_file is not None:
+        if st.button("이 PDF로 Vector store 생성"):
+            with st.spinner("Vector store 생성 및 파일 업로드 중..."):
+                # 1) Vector store 생성  (beta 아님!)
+                vector_store = client.vector_stores.create(
+                    name="chatpdf-store",
                 )
 
-                # 3) vector store에 파일 연결
-                client.beta.vector_stores.files.create(
-                    vector_store_id=vector_store.id,
-                    file_id=file.id,
-                )
+                # 2) 업로드된 파일을 임시로 저장해서 파일 객체로 전달
+                import tempfile
+                import os
 
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                    tmp.write(uploaded_file.getvalue())
+                    tmp_path = tmp.name
+
+                with open(tmp_path, "rb") as f:
+                    client.vector_stores.file_batches.upload_and_poll(
+                        vector_store_id=vector_store.id,
+                        files=[f],
+                    )
+
+                os.remove(tmp_path)
+
+                # 3) 세션에 vector store ID 저장
                 st.session_state["pdf_vector_store_id"] = vector_store.id
-                st.success("Vector store 생성 완료!")
-            except Exception as e:
-                st.error("Vector store 생성 중 오류가 발생했습니다.")
-                st.write(e)
+                st.success("Vector store 생성이 완료되었습니다!")
 
-    # Vector store가 있을 때만 질문/답변 UI 표시
-    vs_id = st.session_state.get("pdf_vector_store_id")
-    if vs_id:
-        st.info(f"현재 활성화된 Vector store ID: {vs_id}")
-
-        question = st.text_input("PDF 내용을 바탕으로 질문을 입력하세요")
-
-        if st.button("PDF에게 물어보기"):
-            if not question.strip():
-                st.error("질문을 입력하세요.")
-            else:
-                with st.spinner("PDF 내용을 검색하는 중입니다..."):
-                    try:
-                        response = client.responses.create(
-                            model="gpt-5-mini",
-                            input=question,
-                            tools=[{"type": "file_search"}],
-                            tool_resources={
-                                "file_search": {
-                                    "vector_store_ids": [vs_id],
-                                }
-                            },
-                        )
-                        answer = response.output[0].content[0].text
-                        st.subheader("답변")
-                        st.write(answer)
-                    except Exception as e:
-                        st.error("질문 처리 중 오류가 발생했습니다.")
-                        st.write(e)
-
-        # Vector store 삭제 버튼
+    # Clear 버튼: vector store 삭제
+    if st.session_state["pdf_vector_store_id"]:
         if st.button("Vector store 삭제 (Clear)"):
-            with st.spinner("Vector store 삭제 중입니다..."):
-                try:
-                    client.beta.vector_stores.delete(vector_store_id=vs_id)
-                except Exception as e:
-                    st.error("삭제 중 오류가 발생했습니다.")
-                    st.write(e)
-                else:
-                    st.session_state["pdf_vector_store_id"] = None
-                    st.success("Vector store가 삭제되었습니다.")
+            client.vector_stores.delete(
+                vector_store_id=st.session_state["pdf_vector_store_id"]
+            )
+            st.session_state["pdf_vector_store_id"] = None
+            st.success("Vector store가 삭제되었습니다.")
 
+    # 질문 입력 & 응답
+    if st.session_state["pdf_vector_store_id"]:
+        question = st.text_input("PDF 내용을 바탕으로 질문해 보세요")
 
-# -----------------------------------
-# 페이지 라우팅
-# -----------------------------------
-if page.startswith("1."):
-    page_qna()
-elif page.startswith("2."):
-    page_chat()
-elif page.startswith("3."):
-    page_library_chatbot()
-elif page.startswith("4."):
-    page_chatpdf()
+        if st.button("질문하기") and question.strip():
+            with st.spinner("응답 생성 중..."):
+                response = client.responses.create(
+                    model="gpt-5-mini",
+                    input=question,
+                    tools=[{"type": "file_search"}],
+                    extra_body={
+                        "file_search": {
+                            "vector_store_ids": [st.session_state["pdf_vector_store_id"]]
+                        }
+                    },
+                )
+
+            # Q&A 페이지에서 사용하던 응답 파싱 함수가 있다면 그대로 사용
+            # 없다면 아래처럼 간단히 텍스트만 꺼내도 돼
+            answer_text = ""
+            for item in response.output:
+                if getattr(item, "type", None) == "message":
+                    for content in item.content:
+                        if getattr(content, "type", None) == "output_text":
+                            answer_text += content.text.value
+
+            st.subheader("답변")
+            st.write(answer_text)
