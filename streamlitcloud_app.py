@@ -41,6 +41,33 @@ page = st.sidebar.radio(
     ],
 )
 
+def get_answer_text(response):
+    """
+    Responses API 응답 객체에서 텍스트 답변만 안전하게 뽑아오는 함수.
+    (output이 None인 경우도 처리)
+    """
+    # 1) output 리스트 안에 content.text.value 구조가 있는 경우
+    try:
+        if getattr(response, "output", None):
+            parts = []
+            for item in response.output[0].content:
+                if getattr(item, "text", None) and getattr(item.text, "value", None):
+                    parts.append(item.text.value)
+            if parts:
+                return "\n".join(parts).strip()
+    except Exception:
+        pass
+
+    # 2) 새 버전에서 제공하는 output_text 속성이 있는 경우
+    text = getattr(response, "output_text", None)
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+
+    # 3) 그래도 못 찾으면 통째로 보여주고 빈 문자열 반환
+    st.warning("모델 응답 구조가 예상과 달라 전체 응답을 아래에 출력합니다.")
+    st.write(response)
+    return ""
+
 
 # -----------------------------------
 # 1. Q&A 페이지 (이미 만든 것 + cache_data)
