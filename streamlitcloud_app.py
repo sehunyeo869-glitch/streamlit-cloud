@@ -139,6 +139,37 @@ def page_chat():
                     # ---- 응답 텍스트 안전하게 꺼내기 ----
                     answer = None
 
+                    # 1) output_text 속성이 있으면 그대로 사용
+                    answer = getattr(response, "output_text", None)
+
+                    # 2) 없으면 output -> content -> text 순서대로 한 단계씩 검사하며 꺼내기
+                    if not answer:
+                        output = getattr(response, "output", None)
+                        if output and len(output) > 0:
+                            content_list = getattr(output[0], "content", None)
+                            if content_list and len(content_list) > 0:
+                                text_obj = getattr(content_list[0], "text", None)
+                                if text_obj is not None:
+                                    answer = getattr(text_obj, "value", str(text_obj))
+
+                    # 3) 그래도 못 꺼냈으면 전체 response를 문자열로 보여주기 (디버그용)
+                    if not answer:
+                        answer = f"응답을 읽어오는 데 실패했어요.\n원본 응답: {response}"
+
+                    st.markdown(answer)
+
+                    st.session_state["chat_messages"].append(
+                        {"role": "assistant", "content": answer}
+                    )
+                except Exception as e:
+                    st.error(f"오류가 발생했습니다: {e}")
+
+    # Clear 버튼
+    if st.button("대화 내용 지우기"):
+        st.session_state["chat_messages"] = []
+        st.success("대화 내용이 초기화되었습니다.")
+
+
 
 
 
