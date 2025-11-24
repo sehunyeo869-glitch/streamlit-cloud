@@ -750,7 +750,7 @@ def page_chatpdf():
                         )
 
                         # 1번 페이지랑 똑같이 답변 추출
-                        answer = response.output[0].content[0].text.value
+                        answer = get_answer_text(response)
                         st.subheader("답변")
                         st.write(answer)
 
